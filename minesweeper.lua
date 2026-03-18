@@ -69,6 +69,7 @@ local TEXTS = {
     win = "YOU WIN",
     boom = "BOOM",
     hud_hint = "WSAD: Move  E: Open  Q: Mark  F: Chord  Double R: Restart  BS: Menu",
+    over_hint = "Double Left: Restart  Double Right: Menu",
   },
   cn = {
     ver = "OpenComputers 1.7.10 版本",
@@ -90,6 +91,7 @@ local TEXTS = {
     win = "胜利",
     boom = "起爆",
     hud_hint = "WSAD移动  E开格  Q标记  F和弦  双击R重开  Backspace返回菜单",
+    over_hint = "左键双击重新开始  右键双击返回主界面",
   }
 }
 
@@ -240,11 +242,14 @@ local custom = {
 local game = {
   w = 9, h = 9, mines = 10, modeNoGuess = false,
   boardX = 1, boardY = 1,
+  offsetX = 0, offsetY = 0,
   minesMap = {}, nums = {}, open = {}, mark = {}, 
   cursorX = 1, cursorY = 1,
   generated = false, gameOver = false, win = false,
   startTime = 0, elapsed = 0,
-  pressLeft = false, lastR = 0
+  pressLeft = false, lastR = 0,
+  lastClickTime = 0, lastClickBtn = -1,
+  dragStartX = -1, dragStartY = -1, dragStartOffX = 0, dragStartOffY = 0
 }
 
 local function switchState(newState)
@@ -283,6 +288,7 @@ local function resetGameData(w, h, mines, noGuess)
   game.cursorX, game.cursorY = math.floor((w + 1) / 2), math.floor((h + 1) / 2)
   game.generated, game.gameOver, game.win = false, false, false
   game.startTime, game.elapsed, game.pressLeft = computer.uptime(), 0, false
+  game.offsetX, game.offsetY = 0, 0
 end
 
 local function inBoard(x, y) return x >= 1 and x <= game.w and y >= 1 and y <= game.h end
@@ -518,16 +524,38 @@ end
 ----------------------------------------------------------------
 -- 坐标/渲染
 ----------------------------------------------------------------
+local function getBoardDisplayRange()
+  local maxVisibleW = SW - 4
+  local maxVisibleH = SH - 8
+  local viewW = math.min(game.w, math.floor(maxVisibleW / CELL_W))
+  local viewH = math.min(game.h, maxVisibleH)
+  return viewW, viewH
+end
+
 local function calcBoardPos()
-  local bw, bh = game.w * CELL_W + 2, game.h + 2
+  local vw, vh = getBoardDisplayRange()
+  local bw, bh = vw * CELL_W + 2, vh + 2
   game.boardX = math.max(2, math.floor((SW - bw) / 2) + 1)
   game.boardY = math.max(4, math.floor((SH - bh) / 2) + 1)
 end
 
+local function scrollCursorIntoView()
+  local vw, vh = getBoardDisplayRange()
+  if game.cursorX <= game.offsetX then game.offsetX = game.cursorX - 1
+  elseif game.cursorX > game.offsetX + vw then game.offsetX = game.cursorX - vw end
+  if game.cursorY <= game.offsetY then game.offsetY = game.cursorY - 1
+  elseif game.cursorY > game.offsetY + vh then game.offsetY = game.cursorY - vh end
+  game.offsetX = clamp(game.offsetX, 0, math.max(0, game.w - vw))
+  game.offsetY = clamp(game.offsetY, 0, math.max(0, game.h - vh))
+end
+
 local function screenToCell(px, py)
+  calcBoardPos()
+  local vw, vh = getBoardDisplayRange()
   local x0, y0 = game.boardX + 1, game.boardY + 1
-  if py < y0 or py >= y0 + game.h or px < x0 or px >= x0 + game.w * CELL_W then return nil end
-  local cx, cy = math.floor((px - x0) / CELL_W) + 1, (py - y0) + 1
+  if py < y0 or py >= y0 + vh or px < x0 or px >= x0 + vw * CELL_W then return nil end
+  local cx = math.floor((px - x0) / CELL_W) + 1 + game.offsetX
+  local cy = (py - y0) + 1 + game.offsetY
   return inBoard(cx, cy) and cx or nil, cy
 end
 
@@ -550,12 +578,12 @@ local function drawMenu()
   clearBack(COLOR_BG, COLOR_TEXT)
   local pulse = (math.floor(computer.uptime() * 4) % 3)
   local c = (pulse == 0 and COLOR_MENU_A) or (pulse == 1 and COLOR_MENU_B) or COLOR_MENU_C
-  drawCentered(2,  "███╗   ███╗██╗███╗   ██╗███████╗███████╗██╗    ██╗███████╗███████╗██████╗ ", c)
-  drawCentered(3,  "████╗ ████║██║████╗  ██║██╔════╝██╔════╝██║    ██║██╔════╝██╔════╝██╔══██╗", c)
+  drawCentered(2,  "███╗   ███╗██╗███╗   ██╗███████╗███████╗██╗     ██╗███████╗███████╗██████╗ ", c)
+  drawCentered(3,  "████╗ ████║██║████╗  ██║██╔════╝██╔════╝██║     ██║██╔════╝██╔════╝██╔══██╗", c)
   drawCentered(4,  "██╔████╔██║██║██╔██╗ ██║█████╗  ███████╗██║ █╗ ██║█████╗  █████╗  ██████╔╝", c)
   drawCentered(5,  "██║╚██╔╝██║██║██║╚██╗██║██╔══╝  ╚════██║██║███╗██║██╔══╝  ██╔══╝  ██╔══██╗", c)
   drawCentered(6,  "██║ ╚═╝ ██║██║██║ ╚████║███████╗███████║╚███╔███╔╝███████╗███████╗██║  ██║", c)
-  drawCentered(7,  " ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚══════╝╚═╝  ╚═╝", c)
+  drawCentered(7,  " ╚═╝      ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚══════╝╚═╝  ╚═╝", c)
   drawCentered(9, t("ver"), COLOR_DIM)
   
   local boxW, boxH, boxX, boxY = 48, 12, math.floor((SW - 48) / 2) + 1, 13
@@ -597,12 +625,13 @@ local function drawHUD()
   local left, right = string.format("TIME %04d", clamp(game.elapsed, 0, 9999)), string.format("MINES %04d", remainingMines())
   put(2, 2, left, COLOR_RED, COLOR_BG)
   put(SW - unicode.len(right), 2, right, COLOR_RED, COLOR_BG)
+  local vw, vh = getBoardDisplayRange()
   drawCentered(2, string.format("%dx%d  %d %s", game.w, game.h, game.mines, game.modeNoGuess and t("m_noguess") or t("m_classic")), COLOR_DIM)
   put(2, SH - 1, t("hud_hint"), COLOR_DIM, COLOR_BG)
 end
 
 local function getCellDisplay(x, y)
-  local isCursor = (x == game.cursorX and y == game.cursorY and not game.gameOver)
+  local isCursor = (x == game.cursorX and y == game.cursorY)
   local bg, fg, text = COLOR_COVERED_BG, COLOR_TEXT, "· "
   if game.open[y][x] then
     bg = COLOR_OPEN_BG
@@ -623,12 +652,16 @@ end
 
 local function drawBoard()
   calcBoardPos()
-  drawBox(game.boardX, game.boardY, game.w * CELL_W + 2, game.h + 2, COLOR_PANEL2)
-  for y = 1, game.h do
-    for x = 1, game.w do
-      local sx, sy = game.boardX + 1 + (x - 1) * CELL_W, game.boardY + y
-      local text, fg, bg = getCellDisplay(x, y)
-      put(sx, sy, text, fg, bg)
+  local vw, vh = getBoardDisplayRange()
+  drawBox(game.boardX, game.boardY, vw * CELL_W + 2, vh + 2, COLOR_PANEL2)
+  for y = 1, vh do
+    for x = 1, vw do
+      local gx, gy = x + game.offsetX, y + game.offsetY
+      if inBoard(gx, gy) then
+        local sx, sy = game.boardX + 1 + (x - 1) * CELL_W, game.boardY + y
+        local text, fg, bg = getCellDisplay(gx, gy)
+        put(sx, sy, text, fg, bg)
+      end
     end
   end
 end
@@ -640,9 +673,16 @@ local function render()
     clearBack(COLOR_BG, COLOR_TEXT)
     drawHUD()
     drawBoard()
-    if game.win then drawCentered(game.boardY - 1, t("win"), COLOR_GREEN)
-    elseif game.gameOver then drawCentered(game.boardY - 1, t("boom"), COLOR_RED)
-    else drawCentered(game.boardY - 1, t("game_title"), COLOR_CYAN) end
+    local vw, vh = getBoardDisplayRange()
+    if game.win then 
+        drawCentered(game.boardY - 1, t("win"), COLOR_GREEN)
+        drawCentered(game.boardY + vh + 2, t("over_hint"), COLOR_DIM)
+    elseif game.gameOver then 
+        drawCentered(game.boardY - 1, t("boom"), COLOR_RED)
+        drawCentered(game.boardY + vh + 2, t("over_hint"), COLOR_DIM)
+    else 
+        drawCentered(game.boardY - 1, t("game_title"), COLOR_CYAN) 
+    end
   end
   flush()
 end
@@ -695,19 +735,29 @@ local function handleKey(code, char)
       local now = computer.uptime()
       if now - game.lastR <= 0.35 then restartCurrent() end
       game.lastR = now
-    elseif not game.gameOver then
+    else
       if code == keyboard.keys.w or code == keyboard.keys.up then game.cursorY = clamp(game.cursorY - 1, 1, game.h)
       elseif code == keyboard.keys.s or code == keyboard.keys.down then game.cursorY = clamp(game.cursorY + 1, 1, game.h)
       elseif code == keyboard.keys.a or code == keyboard.keys.left then game.cursorX = clamp(game.cursorX - 1, 1, game.w)
       elseif code == keyboard.keys.d or code == keyboard.keys.right then game.cursorX = clamp(game.cursorX + 1, 1, game.w)
-      elseif code == keyboard.keys.e or code == keyboard.keys.space then openCell(game.cursorX, game.cursorY)
-      elseif code == keyboard.keys.q then toggleMark(game.cursorX, game.cursorY)
-      elseif code == keyboard.keys.f then chordOpen(game.cursorX, game.cursorY) end
-    elseif code == keyboard.keys.enter or code == keyboard.keys.space then restartCurrent() end
+      elseif not game.gameOver then
+        if code == keyboard.keys.e or code == keyboard.keys.space then openCell(game.cursorX, game.cursorY)
+        elseif code == keyboard.keys.q then toggleMark(game.cursorX, game.cursorY)
+        elseif code == keyboard.keys.f then chordOpen(game.cursorX, game.cursorY) end
+      elseif code == keyboard.keys.enter or code == keyboard.keys.space then 
+        restartCurrent() 
+      end
+      scrollCursorIntoView()
+    end
   end
 end
 
 local function handleTouch(screen, x, y, button, player)
+  local now = computer.uptime()
+  local isDoubleClick = (now - game.lastClickTime < 0.4 and game.lastClickBtn == button)
+  game.lastClickTime = now
+  game.lastClickBtn = button
+
   if state == "menu" then
     local bx, by = math.floor((SW - 48) / 2) + 1, 13
     if y == by + 2 then
@@ -723,13 +773,38 @@ local function handleTouch(screen, x, y, button, player)
     local cx, cy = math.floor((SW - 44) / 2) + 1, 7
     for i = 1, 3 do if y == cy + 1 + i * 2 and x >= cx + 4 and x <= cx + 40 then custom.focus = i end end
   elseif state == "game" then
+    if game.gameOver and isDoubleClick then
+        if button == 0 then 
+            restartCurrent() 
+            return
+        elseif button == 1 then 
+            switchState("menu") 
+            return 
+        end
+    end
+
     local cx, cy = screenToCell(x, y)
     if cx then
       game.cursorX, game.cursorY = cx, cy
-      if button == 0 then game.pressLeft = true openCell(cx, cy)
-      elseif button == 1 then if game.pressLeft then chordOpen(cx, cy) else toggleMark(cx, cy) end
-      elseif button == 2 then chordOpen(cx, cy) end
+      if not game.gameOver then
+        if button == 0 then game.pressLeft = true openCell(cx, cy)
+        elseif button == 1 then if game.pressLeft then chordOpen(cx, cy) else toggleMark(cx, cy) end
+        elseif button == 2 then chordOpen(cx, cy) end
+      end
+    else
+      game.dragStartX, game.dragStartY = x, y
+      game.dragStartOffX, game.dragStartOffY = game.offsetX, game.offsetY
     end
+  end
+end
+
+local function handleDrag(x, y)
+  if state == "game" and game.dragStartX ~= -1 then
+    local vw, vh = getBoardDisplayRange()
+    local dx = math.floor((game.dragStartX - x) / CELL_W)
+    local dy = game.dragStartY - y
+    game.offsetX = clamp(game.dragStartOffX + dx, 0, math.max(0, game.w - vw))
+    game.offsetY = clamp(game.dragStartOffY + dy, 0, math.max(0, game.h - vh))
   end
 end
 
@@ -746,10 +821,17 @@ local ok, err = pcall(function()
     if ev[1] == "interrupted" then break
     elseif ev[1] == "key_down" then handleKey(ev[4], ev[3])
     elseif ev[1] == "touch" then handleTouch(ev[2], ev[3], ev[4], ev[5], ev[6])
-    elseif ev[1] == "drop" then game.pressLeft = false
+    elseif ev[1] == "drop" then 
+        game.pressLeft = false 
+        game.dragStartX = -1 
     elseif ev[1] == "drag" then
         local cx, cy = screenToCell(ev[3], ev[4])
-        if cx then game.cursorX, game.cursorY = cx, cy end
+        if cx then 
+            game.cursorX, game.cursorY = cx, cy 
+            scrollCursorIntoView()
+        else
+            handleDrag(ev[3], ev[4])
+        end
     end
   end
 end)
